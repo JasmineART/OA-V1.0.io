@@ -869,12 +869,10 @@
      CONTACT / QUOTE
      Form submissions route to jareevesthomas@gmail.com via Formspree.
      ──────────────────────────────────────────────────────────────────
-     SETUP (one-time):
-       1. Go to https://formspree.io and sign up / log in.
-       2. Create a new form and set the notification email to
-          jareevesthomas@gmail.com.
-       3. Copy your Form ID (looks like: xpwzgekv).
-       4. Replace YOUR_FORM_ID in the <form action="..."> below.
+     ACTIVATION (one-time, no account needed):
+       When the first real submission arrives, Formspree will send a
+       confirmation email to jareevesthomas@gmail.com — click the link
+       in that email and all future submissions will deliver instantly.
 ════════════════════════════════════════════════════════════════════ -->
 <section id="contact" aria-labelledby="contact-heading">
   <div class="container">
@@ -924,7 +922,7 @@
 
         <form
           id="quoteForm"
-          action="https://formspree.io/f/YOUR_FORM_ID"
+          action="https://formspree.io/jareevesthomas@gmail.com"
           method="POST"
           novalidate
           aria-label="Request a quote"
