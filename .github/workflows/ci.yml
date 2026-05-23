@@ -1,0 +1,245 @@
+# ═══════════════════════════════════════════════════════════════════
+# CI — Quality Gate & Deploy  |  OA-V1.0.io / theaoai.com
+#
+# Runs on every push to main and every pull request targeting main.
+# All quality checks must pass before the deploy job is allowed.
+#
+# ── GitHub Pages Setup (one-time) ──────────────────────────────────
+#   For the Deploy job to work, change your Pages source to
+#   "GitHub Actions" in:
+#     Repository Settings → Pages → Source → GitHub Actions
+# ═══════════════════════════════════════════════════════════════════
+
+name: CI — Quality Gate & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 1 — HTML Structure
+  # ─────────────────────────────────────────────────────────────────
+  html-validate:
+    name: Validate HTML Structure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for unclosed / mismatched tags
+        run: |
+          python3 - << 'EOF'
+          import sys
+          from html.parser import HTMLParser
+
+          VOID = {
+            'area','base','br','col','embed','hr','img','input',
+            'link','meta','param','source','track','wbr'
+          }
+
+          class Checker(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.stack, self.errors = [], []
+
+              def handle_starttag(self, tag, attrs):
+                  if tag not in VOID:
+                      self.stack.append((tag, self.getpos()[0]))
+
+              def handle_endtag(self, tag):
+                  if tag in VOID:
+                      return
+                  if self.stack and self.stack[-1][0] == tag:
+                      self.stack.pop()
+                  else:
+                      self.errors.append(
+                          f'Unexpected </{tag}> at line {self.getpos()[0]}'
+                      )
+
+          c = Checker()
+          c.feed(open('index.html', encoding='utf-8').read())
+
+          failed = False
+          for e in c.errors:
+              print(f'[FAIL] {e}'); failed = True
+          for tag, line in c.stack:
+              print(f'[FAIL] Unclosed <{tag}> opened at line {line}')
+              failed = True
+
+          if not failed:
+              print('[PASS] HTML structure — no unclosed or mismatched tags')
+          sys.exit(1 if failed else 0)
+          EOF
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 2 — JavaScript Syntax
+  # ─────────────────────────────────────────────────────────────────
+  js-syntax:
+    name: Validate JavaScript Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract script blocks
+        run: |
+          python3 - << 'EOF'
+          import re
+          content = open('index.html', encoding='utf-8').read()
+          scripts = re.findall(r'<script[^>]*>(.*?)</script>', content, re.DOTALL)
+          with open('/tmp/app.js', 'w') as f:
+              for s in scripts:
+                  f.write(s + '\n')
+          print(f'Extracted {len(scripts)} script block(s) → /tmp/app.js')
+          EOF
+
+      - name: Check syntax with Node.js
+        run: node --check /tmp/app.js && echo '[PASS] JavaScript syntax valid'
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 3 — Security Headers
+  # ─────────────────────────────────────────────────────────────────
+  security-headers:
+    name: Verify Security Headers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check required meta security headers
+        run: |
+          FAIL=0
+          check() {
+            if grep -q "$1" index.html; then
+              echo "[PASS] $2"
+            else
+              echo "[FAIL] $2 — MISSING"
+              FAIL=1
+            fi
+          }
+          check "Content-Security-Policy"  "Content-Security-Policy"
+          check "X-Content-Type-Options"   "X-Content-Type-Options"
+          check "Referrer-Policy"          "Referrer-Policy"
+          check "Permissions-Policy"       "Permissions-Policy"
+          exit $FAIL
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 4 — Form Endpoint
+  # ─────────────────────────────────────────────────────────────────
+  form-endpoint:
+    name: Verify Form Endpoint & Email
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for stale placeholder URLs
+        run: |
+          if grep -qE "REPLACE_WITH|YOUR_FORMSPREE_ID" index.html; then
+            echo "[FAIL] Stale placeholder URL found in form action — deploy blocked"
+            exit 1
+          fi
+          echo "[PASS] No placeholder URLs detected"
+
+      - name: Verify company email in form endpoint
+        run: |
+          if grep -q "help@jartsoftwaresolutions.com" index.html; then
+            echo "[PASS] Form routes to help@jartsoftwaresolutions.com"
+          else
+            echo "[FAIL] Company email missing from form endpoint"
+            exit 1
+          fi
+
+      - name: Verify FormSubmit.co AJAX endpoint
+        run: |
+          if grep -q "formsubmit.co/ajax/" index.html; then
+            echo "[PASS] FormSubmit.co AJAX endpoint present"
+          else
+            echo "[FAIL] FormSubmit.co AJAX endpoint not found"
+            exit 1
+          fi
+
+      - name: Verify JSON submission (not legacy FormData)
+        run: |
+          if grep -q "application/json" index.html; then
+            echo "[PASS] Fetch uses Content-Type: application/json"
+          else
+            echo "[FAIL] Fetch not sending JSON — form will fail on FormSubmit.co"
+            exit 1
+          fi
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 5 — SEO & Meta
+  # ─────────────────────────────────────────────────────────────────
+  seo-meta:
+    name: Check SEO & Meta Tags
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required meta tags
+        run: |
+          FAIL=0
+          check_warn() {
+            if grep -q "$1" index.html; then
+              echo "[PASS] $2"
+            else
+              echo "[WARN] $2 — missing (non-blocking)"
+            fi
+          }
+          check_fail() {
+            if grep -q "$1" index.html; then
+              echo "[PASS] $2"
+            else
+              echo "[FAIL] $2 — MISSING"
+              FAIL=1
+            fi
+          }
+          check_fail '<meta charset'              "charset meta"
+          check_fail '<meta name="viewport"'      "viewport meta"
+          check_fail '<meta name="description"'   "description meta"
+          check_fail 'rel="canonical"'            "canonical URL"
+          check_fail 'rel="icon"'                 "favicon"
+          check_warn 'og:title'                   "og:title"
+          check_warn 'og:description'             "og:description"
+          check_warn 'twitter:card'               "twitter:card"
+          exit $FAIL
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 6 — Deploy to GitHub Pages
+  # Runs only on push to main, after ALL quality checks pass.
+  # Requires repo Settings → Pages → Source = "GitHub Actions"
+  # ─────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: [html-validate, js-syntax, security-headers, form-endpoint, seo-meta]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
