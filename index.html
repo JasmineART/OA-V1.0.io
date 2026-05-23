@@ -1280,13 +1280,18 @@
     el.addEventListener(evt, function () { setError(fieldMap[name], false); });
   });
 
-  /* Keep hidden _replyto field in sync with email input (for Formspree reply-to) */
+  /* Keep hidden _replyto field in sync with email input (FormSubmit.co reply-to).
+     Listen to both 'input' (typing) and 'change' (browser autofill) so the field
+     is always populated before submission. */
   var emailEl = document.getElementById('femail');
+  function syncReplyTo() {
+    if (!emailEl || !replyField) return;
+    /* Only copy if the value looks like a valid email — prevents injection */
+    replyField.value = isValidEmail(emailEl.value.trim()) ? emailEl.value.trim() : '';
+  }
   if (emailEl && replyField) {
-    emailEl.addEventListener('input', function () {
-      /* Only copy if the value looks like a valid email — prevents injection */
-      replyField.value = isValidEmail(emailEl.value.trim()) ? emailEl.value.trim() : '';
-    });
+    emailEl.addEventListener('input',  syncReplyTo);
+    emailEl.addEventListener('change', syncReplyTo);
   }
 
   /* Form submit */
@@ -1309,11 +1314,17 @@
     submitBtn.disabled = true;
     submitBtn.textContent = 'Sending…';
 
-    /* Build JSON body — exclude client-side honeypot field */
+    /* Sync _replyto one final time to catch any autofill that fired before
+       the listeners were attached (e.g. password-manager fill-on-load). */
+    syncReplyTo();
+
+    /* Build JSON body — exclude honeypot and empty/invalid _replyto */
     var formData = new FormData(form);
     var jsonBody = {};
     formData.forEach(function (v, k) {
-      if (k !== '_gotcha') { jsonBody[k] = v; }
+      if (k === '_gotcha') return;                          // honeypot — never send
+      if (k === '_replyto' && !isValidEmail(v)) return;    // skip blank/invalid reply-to
+      jsonBody[k] = v;
     });
 
     fetch(form.action, {
@@ -1326,20 +1337,26 @@
       return res.json();
     })
     .then(function (payload) {
-      if (payload && payload.success === 'true') {
+      /* FormSubmit.co returns {success:"true"} (string) or {success:true} (boolean) */
+      var ok = payload && (payload.success === 'true' || payload.success === true);
+      if (ok) {
         form.style.display = 'none';
         formSuccess.style.display = 'block';
         formSuccess.focus();
       } else {
-        var msg = (payload && payload.message) ? payload.message : 'Submission failed. Please try again.';
-        throw new Error(msg);
+        throw new Error('rejected');
       }
     })
-    .catch(function (err) {
+    .catch(function () {
       submitBtn.disabled = false;
       submitBtn.innerHTML = origBtnHTML;
-      /* Show a safe, generic message — never echo raw error detail to the DOM */
-      formAlert.textContent = 'Something went wrong. Please try again or contact us directly.';
+      /* Show a safe message — never echo raw error detail to the DOM.
+         Provide a direct mailto link so users are never left without recourse. */
+      formAlert.innerHTML =
+        'Something went wrong. Please try again or ' +
+        '<a href="mailto:help@jartsoftwaresolutions.com" ' +
+        'style="color:var(--cyan);text-decoration:underline">' +
+        'email us directly</a>.';
       formAlert.style.display = 'block';
     });
   });
